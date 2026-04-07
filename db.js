@@ -1,4 +1,10 @@
-const { DatabaseSync } = require('node:sqlite');
+// Пробуем better-sqlite3 (Linux/Railway), fallback на node:sqlite (Windows Node 24+)
+let DatabaseSync;
+try {
+  DatabaseSync = require('better-sqlite3');
+} catch (e) {
+  ({ DatabaseSync } = require('node:sqlite'));
+}
 const path = require('path');
 
 const DB_PATH = path.join(__dirname, 'algebra.db');
@@ -8,8 +14,14 @@ let db;
 function getDb() {
   if (!db) {
     db = new DatabaseSync(DB_PATH);
-    db.exec('PRAGMA journal_mode = WAL');
-    db.exec('PRAGMA foreign_keys = ON');
+    // better-sqlite3 имеет pragma(), node:sqlite — нет
+    if (typeof db.pragma === 'function') {
+      db.pragma('journal_mode = WAL');
+      db.pragma('foreign_keys = ON');
+    } else {
+      db.exec('PRAGMA journal_mode = WAL');
+      db.exec('PRAGMA foreign_keys = ON');
+    }
     initSchema();
   }
   return db;
