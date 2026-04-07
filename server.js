@@ -281,6 +281,32 @@ app.delete('/api/admin/questions/:id', adminAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+app.post('/api/admin/questions/bulk', adminAuth, (req, res) => {
+  const { testId, questions } = req.body;
+  if (!testId || !Array.isArray(questions) || !questions.length) {
+    return res.status(400).json({ error: 'Нужны testId и массив questions' });
+  }
+  const test = db.getTestById(testId);
+  if (!test) return res.status(404).json({ error: 'Тест не найден' });
+
+  const existing = db.getQuestionsByTest(testId, true);
+  let sortOrder = existing.length ? Math.max(...existing.map(q => q.sort_order || 0)) + 1 : 1;
+
+  const ids = [];
+  for (const q of questions) {
+    const { topic, question, options, correctIndex, explanation } = q;
+    if (!topic || !question || !Array.isArray(options) || options.length < 2 ||
+        correctIndex == null || correctIndex < 0 || correctIndex >= options.length) {
+      return res.status(400).json({ error: `Неверный формат вопроса: ${JSON.stringify(q).slice(0, 80)}` });
+    }
+    const id = db.createQuestion(testId, topic, question, options, correctIndex, explanation || '', sortOrder++);
+    ids.push(id);
+  }
+
+  log('INFO', 'admin:bulk-import', { testId, count: ids.length, test: test.title });
+  res.json({ imported: ids.length, ids });
+});
+
 // ─── Socket.IO ────────────────────────────────────────────────────────────────
 
 const activeStudents = new Map(); // socketId → { studentId, name, testId, testTitle, progress, total, answersLog }

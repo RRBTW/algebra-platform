@@ -60,6 +60,49 @@
   </div>
 </div>
 
+<!-- Модалка импорта JSON -->
+<div id="importModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:200;overflow-y:auto;">
+  <div style="max-width:700px;margin:32px auto;padding:0 16px 32px;">
+    <div class="card">
+      <div class="flex items-center gap-3 mb-3">
+        <h2 class="font-bold flex-1">Импорт вопросов из JSON</h2>
+        <button onclick="closeImport()" class="btn btn--secondary btn--sm">✕</button>
+      </div>
+
+      <div style="background:#0d0d1a;border:1px solid #2a2a3e;border-radius:8px;padding:12px;margin-bottom:12px;font-size:.78rem;color:#a5b4fc;font-family:monospace;white-space:pre;">
+[
+  {
+    "topic": "Область определения",
+    "question": "Найдите ОДЗ дроби (x+1)/(x-2)",
+    "options": ["x ≠ 2", "x ≠ -1", "x ≠ 0", "Все числа"],
+    "correctIndex": 0,
+    "explanation": "Знаменатель x-2 ≠ 0, поэтому x ≠ 2"
+  }
+]</div>
+
+      <div class="flex gap-2 mb-3" style="align-items:center;">
+        <label class="btn btn--secondary btn--sm" style="cursor:pointer;">
+          📂 Загрузить файл
+          <input type="file" id="importFile" accept=".json" style="display:none;" onchange="loadFile(this)">
+        </label>
+        <span style="color:#6b7280;font-size:.8rem;">— или вставьте JSON ниже</span>
+      </div>
+
+      <textarea id="importJson" class="input" rows="10" style="font-family:monospace;font-size:.8rem;"
+        placeholder='[{"topic":"...","question":"...","options":["А","Б","В","Г"],"correctIndex":0,"explanation":"..."}]'></textarea>
+
+      <div style="display:flex;gap:8px;margin-top:12px;align-items:center;">
+        <button class="btn btn--secondary btn--sm" onclick="previewImport()">👁 Предпросмотр</button>
+        <button id="importConfirmBtn" class="btn btn--primary" onclick="confirmImport()" style="display:none;">✅ Импортировать</button>
+        <span id="importCount" style="font-size:.85rem;color:#6b7280;"></span>
+      </div>
+
+      <div id="importPreview" style="margin-top:16px;"></div>
+      <div id="importError" class="mt-3 text-sm" style="color:var(--wrong-text);display:none;"></div>
+    </div>
+  </div>
+</div>
+
 <!-- Модалка редактирования/добавления вопроса -->
 <div id="qModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;overflow-y:auto;">
   <div style="max-width:620px;margin:40px auto;padding:0 16px;">
@@ -150,8 +193,9 @@
 
     const panel = document.getElementById('rightPanel');
     panel.innerHTML = `
-      <div class="flex items-center gap-3 mb-4">
+      <div class="flex items-center gap-3 mb-4" style="flex-wrap:wrap;gap:8px;">
         <h2 class="font-bold flex-1" style="font-size:1.1rem;">Вопросы теста</h2>
+        <button class="btn btn--secondary btn--sm" onclick="openImport()">📥 Импорт JSON</button>
         <button class="btn btn--primary btn--sm" onclick="openAddQuestion()">+ Добавить вопрос</button>
       </div>
       ${!questions.length ? '<div class="empty"><div class="empty__text">Нет вопросов. Добавьте первый!</div></div>' : ''}
@@ -259,6 +303,127 @@
   document.getElementById('qModal').addEventListener('click', (e) => {
     if (e.target === document.getElementById('qModal')) closeQModal();
   });
+
+  // ─── JSON Import ────────────────────────────────────────────────────────────
+
+  let parsedImport = null;
+
+  function openImport() {
+    if (!selectedTestId) { alert('Сначала выберите тест'); return; }
+    document.getElementById('importJson').value = '';
+    document.getElementById('importPreview').innerHTML = '';
+    document.getElementById('importError').style.display = 'none';
+    document.getElementById('importCount').textContent = '';
+    document.getElementById('importConfirmBtn').style.display = 'none';
+    parsedImport = null;
+    document.getElementById('importModal').style.display = 'block';
+  }
+
+  function closeImport() {
+    document.getElementById('importModal').style.display = 'none';
+    parsedImport = null;
+  }
+
+  document.getElementById('importModal').addEventListener('click', (e) => {
+    if (e.target === document.getElementById('importModal')) closeImport();
+  });
+
+  function loadFile(input) {
+    const file = input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => { document.getElementById('importJson').value = e.target.result; };
+    reader.readAsText(file, 'utf-8');
+  }
+
+  function previewImport() {
+    const errEl = document.getElementById('importError');
+    const previewEl = document.getElementById('importPreview');
+    const countEl = document.getElementById('importCount');
+    const confirmBtn = document.getElementById('importConfirmBtn');
+
+    errEl.style.display = 'none';
+    previewEl.innerHTML = '';
+    confirmBtn.style.display = 'none';
+    parsedImport = null;
+
+    let data;
+    try {
+      data = JSON.parse(document.getElementById('importJson').value.trim());
+    } catch (e) {
+      errEl.textContent = 'Ошибка парсинга JSON: ' + e.message;
+      errEl.style.display = 'block';
+      return;
+    }
+
+    if (!Array.isArray(data) || !data.length) {
+      errEl.textContent = 'JSON должен быть непустым массивом вопросов';
+      errEl.style.display = 'block';
+      return;
+    }
+
+    const errors = [];
+    data.forEach((q, i) => {
+      if (!q.topic) errors.push(`#${i+1}: нет поля "topic"`);
+      else if (!q.question) errors.push(`#${i+1}: нет поля "question"`);
+      else if (!Array.isArray(q.options) || q.options.length < 2) errors.push(`#${i+1}: "options" должен быть массивом минимум из 2 элементов`);
+      else if (q.correctIndex == null || q.correctIndex < 0 || q.correctIndex >= q.options.length) errors.push(`#${i+1}: "correctIndex" вне диапазона (0–${q.options.length-1})`);
+    });
+
+    if (errors.length) {
+      errEl.innerHTML = errors.slice(0, 5).map(e => `• ${e}`).join('<br>') + (errors.length > 5 ? `<br>...и ещё ${errors.length - 5}` : '');
+      errEl.style.display = 'block';
+      return;
+    }
+
+    parsedImport = data;
+    countEl.textContent = `${data.length} вопросов`;
+    confirmBtn.style.display = '';
+
+    const optLetters = ['А', 'Б', 'В', 'Г', 'Д', 'Е'];
+    previewEl.innerHTML = `
+      <div style="font-size:.8rem;color:#6b7280;margin-bottom:8px;">Предпросмотр (первые 5):</div>
+      ${data.slice(0, 5).map((q, i) => `
+        <div style="background:#16162a;border-radius:8px;padding:10px 12px;margin-bottom:8px;border-left:3px solid #6366f1;">
+          <div style="font-size:.7rem;color:#6366f1;margin-bottom:4px;">${q.topic}</div>
+          <div style="font-size:.85rem;margin-bottom:6px;">${i+1}. ${q.question}</div>
+          ${q.options.map((o, oi) => `
+            <div style="font-size:.8rem;color:${oi === q.correctIndex ? '#4ade80' : '#9ca3af'};">
+              ${oi === q.correctIndex ? '✓' : '○'} ${optLetters[oi]||oi}. ${o}
+            </div>`).join('')}
+          ${q.explanation ? `<div style="font-size:.75rem;color:#a78bfa;margin-top:4px;">💡 ${q.explanation}</div>` : ''}
+        </div>`).join('')}
+      ${data.length > 5 ? `<div style="font-size:.8rem;color:#6b7280;text-align:center;">...и ещё ${data.length - 5} вопросов</div>` : ''}`;
+  }
+
+  async function confirmImport() {
+    if (!parsedImport || !selectedTestId) return;
+    const confirmBtn = document.getElementById('importConfirmBtn');
+    const errEl = document.getElementById('importError');
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = 'Импорт...';
+
+    const r = await fetch('/api/admin/questions/bulk', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ testId: selectedTestId, questions: parsedImport }),
+    });
+    const data = await r.json();
+
+    confirmBtn.disabled = false;
+    confirmBtn.textContent = '✅ Импортировать';
+
+    if (!r.ok) {
+      errEl.textContent = data.error || 'Ошибка импорта';
+      errEl.style.display = 'block';
+      return;
+    }
+
+    closeImport();
+    loadQuestions(selectedTestId);
+    loadTests();
+    alert(`Импортировано ${data.imported} вопросов`);
+  }
 
   loadTests();
 </script>
