@@ -175,6 +175,51 @@ function getAnsweredQuestionIds(attemptId) {
   return store.answers.filter(a => a.attempt_id === Number(attemptId)).map(a => a.question_id);
 }
 
+function getAllStudents() {
+  return store.students.map(s => ({ ...s }));
+}
+
+function getStudentProgress(studentId) {
+  const student = store.students.find(s => s.id === Number(studentId));
+  if (!student) return null;
+
+  const attempts = store.attempts
+    .filter(a => a.student_id === Number(studentId))
+    .sort((a, b) => b.id - a.id)
+    .map(a => {
+      const test = store.tests.find(t => t.id === a.test_id);
+      const answers = store.answers
+        .filter(ans => ans.attempt_id === a.id)
+        .map(ans => {
+          const q = store.questions.find(q => q.id === ans.question_id);
+          return {
+            questionId: ans.question_id,
+            question: q?.question || '',
+            topic: q?.topic || '',
+            options: q ? [...q.options] : [],
+            correctIndex: q?.correct_index ?? 0,
+            selectedIndex: ans.selected_index,
+            isCorrect: ans.is_correct,
+            explanation: q?.explanation || '',
+            answeredAt: ans.answered_at,
+          };
+        })
+        .sort((x, y) => {
+          const qa = store.questions.find(q => q.id === x.questionId);
+          const qb = store.questions.find(q => q.id === y.questionId);
+          return (qa?.sort_order ?? 0) - (qb?.sort_order ?? 0) || x.questionId - y.questionId;
+        });
+      return {
+        ...a,
+        testTitle: test?.title || '',
+        chapter: test?.chapter || '',
+        answers,
+      };
+    });
+
+  return { student, attempts };
+}
+
 // ─── Analytics ────────────────────────────────────────────────────────────────
 
 function getTopicAnalytics() {
@@ -199,4 +244,5 @@ module.exports = {
   createAttempt, getAttempt, getActiveAttempt, finishAttempt, getStudentAttempts, getAllAttempts,
   saveAnswer, getAnswersByAttempt, getAnsweredQuestionIds,
   getTopicAnalytics,
+  getAllStudents, getStudentProgress,
 };

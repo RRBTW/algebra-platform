@@ -6,6 +6,60 @@
   <title>Реалтайм монитор — Алгебра</title>
   <link rel="stylesheet" href="/shared/style.css">
   <script src="/socket.io/socket.io.js"></script>
+  <style>
+    .student-card { cursor: pointer; transition: box-shadow .15s, transform .15s; }
+    .student-card:hover { box-shadow: 0 4px 16px rgba(99,102,241,.25); transform: translateY(-2px); }
+
+    /* Modal */
+    .modal-backdrop {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,.6); z-index: 100;
+      align-items: center; justify-content: center;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal {
+      background: #1e1e2e; border: 1px solid #333; border-radius: 12px;
+      width: 92%; max-width: 680px; max-height: 85vh;
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    .modal__header {
+      display: flex; align-items: center; gap: 12px;
+      padding: 16px 20px; border-bottom: 1px solid #333; flex-shrink: 0;
+    }
+    .modal__title { font-size: 1.1rem; font-weight: 700; flex: 1; }
+    .modal__close {
+      background: none; border: none; color: #888; font-size: 1.4rem;
+      cursor: pointer; padding: 0 4px; line-height: 1;
+    }
+    .modal__close:hover { color: #fff; }
+    .modal__body { overflow-y: auto; padding: 16px 20px; flex: 1; }
+
+    .attempt-block { margin-bottom: 24px; }
+    .attempt-block__title {
+      font-size: .85rem; font-weight: 600; color: #a5b4fc;
+      margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid #2a2a3e;
+    }
+    .answer-row {
+      display: flex; gap: 10px; align-items: flex-start;
+      padding: 8px 10px; border-radius: 8px; margin-bottom: 6px;
+      background: #16162a;
+    }
+    .answer-row__icon { font-size: 1rem; flex-shrink: 0; margin-top: 2px; }
+    .answer-row__body { flex: 1; min-width: 0; }
+    .answer-row__topic { font-size: .7rem; color: #6366f1; margin-bottom: 2px; }
+    .answer-row__question { font-size: .85rem; color: #e5e7eb; }
+    .answer-row__choice { font-size: .8rem; color: #9ca3af; margin-top: 2px; }
+    .answer-row--correct { border-left: 3px solid #22c55e; }
+    .answer-row--wrong   { border-left: 3px solid #ef4444; }
+
+    .stat-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+    .stat-pill {
+      padding: 3px 10px; border-radius: 20px; font-size: .78rem; font-weight: 600;
+    }
+    .stat-pill--green { background: #14532d; color: #4ade80; }
+    .stat-pill--red   { background: #450a0a; color: #f87171; }
+    .stat-pill--blue  { background: #1e3a5f; color: #60a5fa; }
+  </style>
 </head>
 <body>
 
@@ -18,7 +72,8 @@
   </div>
 </header>
 
-<div class="container--wide" style="padding:24px 16px 48px;">
+<div class="container--wide" style="padding:24px 16px 160px;">
+  <p style="font-size:.8rem;color:#6b7280;margin-bottom:16px;">Нажмите на карточку ученика, чтобы увидеть детальный прогресс.</p>
   <div id="empty" class="empty" style="margin-top:48px;">
     <div class="empty__icon">📡</div>
     <div class="empty__text">Ожидание учеников...<br>Когда ученик откроет тест — его карточка появится здесь.</div>
@@ -31,12 +86,25 @@
   <div style="color:#666;font-size:.75rem;font-family:monospace;">Лог событий</div>
 </div>
 
+<!-- Progress Modal -->
+<div class="modal-backdrop" id="modalBackdrop">
+  <div class="modal">
+    <div class="modal__header">
+      <div class="modal__title" id="modalTitle">Прогресс ученика</div>
+      <button class="modal__close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal__body" id="modalBody">
+      <div style="color:#6b7280;text-align:center;padding:32px;">Загрузка...</div>
+    </div>
+  </div>
+</div>
+
 <script>
   const PASS_KEY = 'adminPass';
   const adminPass = sessionStorage.getItem(PASS_KEY);
   if (!adminPass) { location.href = '/admin/'; }
 
-  const students = {}; // studentId → { name, testTitle, progress, total, lastCorrect }
+  const students = {}; // studentId → { name, testTitle, progress, total, lastCorrect, offline, finished, score }
 
   const socket = io();
   socket.emit('admin:join', { pass: adminPass });
@@ -110,7 +178,7 @@
       else if (s.total) statusBadge = `<span class="badge badge--blue">${s.progress}/${s.total}</span>`;
 
       return `
-        <div class="student-card" id="card_${id}" style="${offline ? 'opacity:.5;' : ''}">
+        <div class="student-card" id="card_${id}" onclick="openProgress(${id})" style="${offline ? 'opacity:.5;' : ''}">
           <div class="flex items-center gap-2 mb-1">
             <div class="student-card__name flex-1">${s.name}</div>
             ${statusBadge}
@@ -121,6 +189,7 @@
               <div class="progress__bar" style="width:${pct}%"></div>
             </div>
           ` : ''}
+          <div style="margin-top:8px;font-size:.7rem;color:#6366f1;">👆 нажмите для деталей</div>
         </div>`;
     }).join('');
   }
@@ -143,6 +212,88 @@
     line.textContent = `[${time}] ${text}`;
     log.appendChild(line);
     log.scrollTop = log.scrollHeight;
+  }
+
+  // ─── Progress Modal ────────────────────────────────────────────────────────
+
+  function openProgress(studentId) {
+    const s = students[studentId];
+    document.getElementById('modalTitle').textContent = `Прогресс: ${s?.name || studentId}`;
+    document.getElementById('modalBody').innerHTML = '<div style="color:#6b7280;text-align:center;padding:32px;">Загрузка...</div>';
+    document.getElementById('modalBackdrop').classList.add('open');
+
+    fetch(`/api/admin/student/${studentId}/progress`, {
+      headers: { 'x-admin-pass': adminPass }
+    })
+      .then(r => r.json())
+      .then(renderModal)
+      .catch(err => {
+        document.getElementById('modalBody').innerHTML = `<div style="color:#f87171;padding:16px;">Ошибка загрузки: ${err.message}</div>`;
+      });
+  }
+
+  function closeModal() {
+    document.getElementById('modalBackdrop').classList.remove('open');
+  }
+
+  document.getElementById('modalBackdrop').addEventListener('click', (e) => {
+    if (e.target === document.getElementById('modalBackdrop')) closeModal();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeModal();
+  });
+
+  function renderModal(data) {
+    if (!data || !data.student) {
+      document.getElementById('modalBody').innerHTML = '<div style="color:#f87171;padding:16px;">Ученик не найден</div>';
+      return;
+    }
+
+    const { student, attempts } = data;
+    if (!attempts || !attempts.length) {
+      document.getElementById('modalBody').innerHTML = '<div style="color:#6b7280;text-align:center;padding:32px;">Ученик ещё не начинал тесты</div>';
+      return;
+    }
+
+    const html = attempts.map(attempt => {
+      const finished = !!attempt.finished_at;
+      const correctCount = (attempt.answers || []).filter(a => a.isCorrect).length;
+      const total = attempt.total;
+      const pct = total ? Math.round(100 * correctCount / total) : 0;
+
+      const statusLabel = finished
+        ? `Завершён · ${correctCount}/${total} (${pct}%)`
+        : `В процессе · ${(attempt.answers || []).length} из ${total} ответов`;
+
+      const answersHtml = (attempt.answers || []).length
+        ? attempt.answers.map((a, i) => `
+            <div class="answer-row answer-row--${a.isCorrect ? 'correct' : 'wrong'}">
+              <div class="answer-row__icon">${a.isCorrect ? '✅' : '❌'}</div>
+              <div class="answer-row__body">
+                <div class="answer-row__topic">${a.topic || ''}</div>
+                <div class="answer-row__question">${i + 1}. ${a.question || ''}</div>
+                <div class="answer-row__choice">
+                  Ответ: ${a.options?.[a.selectedIndex] ?? '—'}
+                  ${!a.isCorrect ? ` · Верно: ${a.options?.[a.correctIndex] ?? '—'}` : ''}
+                </div>
+                ${!a.isCorrect && a.explanation ? `<div style="font-size:.75rem;color:#a78bfa;margin-top:3px;">💡 ${a.explanation}</div>` : ''}
+              </div>
+            </div>`).join('')
+        : '<div style="color:#6b7280;font-size:.85rem;padding:8px 0;">Ответов пока нет</div>';
+
+      return `
+        <div class="attempt-block">
+          <div class="attempt-block__title">📋 ${attempt.testTitle || 'Тест'}</div>
+          <div class="stat-row">
+            <span class="stat-pill stat-pill--blue">${statusLabel}</span>
+            ${finished ? `<span class="stat-pill ${pct >= 70 ? 'stat-pill--green' : 'stat-pill--red'}">${pct}%</span>` : ''}
+          </div>
+          ${answersHtml}
+        </div>`;
+    }).join('');
+
+    document.getElementById('modalBody').innerHTML = html;
   }
 </script>
 </body>
