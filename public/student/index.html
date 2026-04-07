@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Вход — Алгебра</title>
+  <link rel="stylesheet" href="/shared/style.css">
+</head>
+<body>
+<div class="login-wrap">
+  <div class="login-card">
+    <div class="login-card__logo">🎓</div>
+    <h1 class="login-card__title">Добро пожаловать!</h1>
+    <p class="login-card__sub">Введите своё имя, чтобы начать</p>
+
+    <form id="loginForm">
+      <div class="form-group">
+        <label for="nameInput">Имя</label>
+        <input id="nameInput" class="input" type="text" placeholder="Например: Маша Иванова" autocomplete="name" required>
+      </div>
+      <button type="submit" class="btn btn--primary btn--block btn--lg">Войти</button>
+      <div id="error" class="mt-3 text-sm" style="color:var(--wrong-text);display:none;"></div>
+    </form>
+
+    <div class="mt-4 text-sm text-gray" style="text-align:center;">
+      <a href="/" style="color:var(--ch1);">← На главную</a>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Если уже залогинен — перейти к тестам
+  const saved = localStorage.getItem('studentToken');
+  if (saved) {
+    window.location.href = '/student/tests.html';
+  }
+
+  document.getElementById('loginForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = document.getElementById('nameInput').value.trim();
+    const errEl = document.getElementById('error');
+    if (!name) return;
+
+    try {
+      const r = await fetch('/api/student/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'Ошибка');
+      localStorage.setItem('studentToken', data.token);
+      localStorage.setItem('studentId', data.studentId);
+      localStorage.setItem('studentName', data.name);
+      window.location.href = '/student/tests.html';
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.style.display = 'block';
+    }
+  });
+</script>
+</body>
+</html>

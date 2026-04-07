@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Реалтайм монитор — Алгебра</title>
+  <link rel="stylesheet" href="/shared/style.css">
+  <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+
+<header class="header">
+  <div class="header__inner">
+    <a href="/admin/" class="btn btn--secondary btn--sm">← Назад</a>
+    <span class="header__logo" style="margin-left:8px;">📡 Реалтайм монитор</span>
+    <div class="header__spacer"></div>
+    <span id="onlineCount" class="badge badge--green">0 онлайн</span>
+  </div>
+</header>
+
+<div class="container--wide" style="padding:24px 16px 48px;">
+  <div id="empty" class="empty" style="margin-top:48px;">
+    <div class="empty__icon">📡</div>
+    <div class="empty__text">Ожидание учеников...<br>Когда ученик откроет тест — его карточка появится здесь.</div>
+  </div>
+  <div id="grid" class="student-grid" style="display:none;"></div>
+</div>
+
+<!-- Лог событий -->
+<div style="position:fixed;bottom:0;left:0;right:0;height:140px;background:#111;border-top:1px solid #333;overflow-y:auto;padding:8px 16px;" id="log">
+  <div style="color:#666;font-size:.75rem;font-family:monospace;">Лог событий</div>
+</div>
+
+<script>
+  const PASS_KEY = 'adminPass';
+  const adminPass = sessionStorage.getItem(PASS_KEY);
+  if (!adminPass) { location.href = '/admin/'; }
+
+  const students = {}; // studentId → { name, testTitle, progress, total, lastCorrect }
+
+  const socket = io();
+  socket.emit('admin:join', { pass: adminPass });
+
+  socket.on('admin:active-students', (list) => {
+    list.forEach(s => {
+      students[s.studentId] = { name: s.name, testTitle: s.testTitle || '—', progress: s.progress || 0, total: s.total || 0 };
+    });
+    renderAll();
+  });
+
+  socket.on('admin:student-joined', ({ studentId, name }) => {
+    students[studentId] = { name, testTitle: '—', progress: 0, total: 0 };
+    renderAll();
+    addLog(`🟢 ${name} подключился`, '#4ade80');
+  });
+
+  socket.on('admin:student-answered', ({ studentId, name, testTitle, questionNum, total, isCorrect, topic }) => {
+    if (students[studentId]) {
+      students[studentId].testTitle = testTitle || students[studentId].testTitle;
+      students[studentId].progress = questionNum;
+      students[studentId].total = total;
+      students[studentId].lastCorrect = isCorrect;
+    }
+    renderAll();
+    flashCard(studentId, isCorrect);
+    const icon = isCorrect ? '✅' : '❌';
+    addLog(`${icon} ${name} — ${topic || ''} (${questionNum}/${total})`, isCorrect ? '#4ade80' : '#f87171');
+  });
+
+  socket.on('admin:student-finished', ({ studentId, name, testTitle, score, total }) => {
+    if (students[studentId]) {
+      students[studentId].testTitle = testTitle;
+      students[studentId].progress = total;
+      students[studentId].total = total;
+      students[studentId].finished = true;
+      students[studentId].score = score;
+    }
+    renderAll();
+    const pct = Math.round(100 * score / total);
+    addLog(`🏁 ${name} завершил тест: ${score}/${total} (${pct}%)`, '#facc15');
+  });
+
+  socket.on('admin:student-left', ({ studentId, name }) => {
+    if (students[studentId]) students[studentId].offline = true;
+    renderAll();
+    addLog(`🔴 ${name} отключился`, '#f87171');
+  });
+
+  function renderAll() {
+    const ids = Object.keys(students);
+    document.getElementById('onlineCount').textContent = `${ids.filter(id => !students[id].offline).length} онлайн`;
+
+    if (!ids.length) {
+      document.getElementById('empty').style.display = 'block';
+      document.getElementById('grid').style.display = 'none';
+      return;
+    }
+    document.getElementById('empty').style.display = 'none';
+    document.getElementById('grid').style.display = 'grid';
+
+    document.getElementById('grid').innerHTML = ids.map(id => {
+      const s = students[id];
+      const pct = s.total ? Math.round(100 * s.progress / s.total) : 0;
+      const offline = s.offline;
+      const finished = s.finished;
+
+      let statusBadge = '';
+      if (offline) statusBadge = '<span class="badge badge--gray">Оффлайн</span>';
+      else if (finished) statusBadge = `<span class="badge badge--green">✓ ${s.score}/${s.total}</span>`;
+      else if (s.total) statusBadge = `<span class="badge badge--blue">${s.progress}/${s.total}</span>`;
+
+      return `
+        <div class="student-card" id="card_${id}" style="${offline ? 'opacity:.5;' : ''}">
+          <div class="flex items-center gap-2 mb-1">
+            <div class="student-card__name flex-1">${s.name}</div>
+            ${statusBadge}
+          </div>
+          <div class="student-card__test">${s.testTitle || '—'}</div>
+          ${s.total ? `
+            <div class="progress" style="margin-top:8px;">
+              <div class="progress__bar" style="width:${pct}%"></div>
+            </div>
+          ` : ''}
+        </div>`;
+    }).join('');
+  }
+
+  function flashCard(studentId, isCorrect) {
+    const card = document.getElementById(`card_${studentId}`);
+    if (!card) return;
+    const cls = isCorrect ? 'flash-correct' : 'flash-wrong';
+    card.classList.remove('flash-correct', 'flash-wrong');
+    void card.offsetWidth; // reflow
+    card.classList.add(cls);
+    setTimeout(() => card.classList.remove(cls), 700);
+  }
+
+  function addLog(text, color = '#e5e7eb') {
+    const log = document.getElementById('log');
+    const line = document.createElement('div');
+    const time = new Date().toLocaleTimeString('ru');
+    line.style.cssText = `color:${color};font-size:.75rem;font-family:monospace;padding:1px 0;`;
+    line.textContent = `[${time}] ${text}`;
+    log.appendChild(line);
+    log.scrollTop = log.scrollHeight;
+  }
+</script>
+</body>
+</html>

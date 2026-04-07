@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Панель учителя — Алгебра</title>
+  <link rel="stylesheet" href="/shared/style.css">
+</head>
+<body>
+
+<div id="loginScreen" class="login-wrap">
+  <div class="login-card">
+    <div class="login-card__logo">👩‍🏫</div>
+    <h1 class="login-card__title">Панель учителя</h1>
+    <p class="login-card__sub">Введите пароль для доступа</p>
+    <form id="loginForm">
+      <div class="form-group">
+        <label for="passInput">Пароль</label>
+        <input id="passInput" class="input" type="password" placeholder="admin123" required>
+      </div>
+      <button type="submit" class="btn btn--primary btn--block btn--lg">Войти</button>
+      <div id="loginError" class="mt-3 text-sm" style="color:var(--wrong-text);display:none;"></div>
+    </form>
+    <div class="mt-4 text-sm text-gray" style="text-align:center;">
+      <a href="/" style="color:var(--ch1);">← На главную</a>
+    </div>
+  </div>
+</div>
+
+<div id="mainScreen" style="display:none;">
+  <header class="header">
+    <div class="header__inner">
+      <span class="header__logo">👩‍🏫 Панель учителя</span>
+      <div class="header__spacer"></div>
+      <div class="header__nav">
+        <a href="/admin/live.html" class="btn btn--primary btn--sm">📡 Реалтайм</a>
+        <a href="/admin/results.html" class="btn btn--secondary btn--sm">📊 Результаты</a>
+        <a href="/admin/editor.html" class="btn btn--secondary btn--sm">✏️ Редактор</a>
+        <button class="btn btn--secondary btn--sm" onclick="logout()">Выйти</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="container" style="padding-top:28px; padding-bottom:48px;">
+    <div class="page-header">
+      <h1>Управление тестами</h1>
+      <p>Включайте и выключайте тесты для учеников</p>
+    </div>
+    <div id="testList">
+      <div class="empty"><div class="empty__icon">⏳</div><div class="empty__text">Загрузка...</div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const PASS_KEY = 'adminPass';
+  let adminPass = sessionStorage.getItem(PASS_KEY);
+
+  async function tryLogin(pass) {
+    const r = await fetch('/api/admin/tests', { headers: { 'x-admin-pass': pass } });
+    return r.ok;
+  }
+
+  async function init() {
+    if (adminPass) {
+      const ok = await tryLogin(adminPass);
+      if (ok) { showMain(); return; }
+      sessionStorage.removeItem(PASS_KEY);
+      adminPass = null;
+    }
+    document.getElementById('loginScreen').style.display = 'flex';
+  }
+
+  document.getElementById('loginForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const pass = document.getElementById('passInput').value;
+    const ok = await tryLogin(pass);
+    if (ok) {
+      adminPass = pass;
+      sessionStorage.setItem(PASS_KEY, pass);
+      showMain();
+    } else {
+      const el = document.getElementById('loginError');
+      el.textContent = 'Неверный пароль';
+      el.style.display = 'block';
+    }
+  });
+
+  function showMain() {
+    document.getElementById('loginScreen').style.display = 'none';
+    document.getElementById('mainScreen').style.display = 'block';
+    loadTests();
+  }
+
+  async function loadTests() {
+    const r = await fetch('/api/admin/tests', { headers: { 'x-admin-pass': adminPass } });
+    const tests = await r.json();
+    const chColors = { ch1: '#2563eb', ch2: '#7c3aed', ch3: '#059669' };
+    const chNames = { ch1: 'Глава I', ch2: 'Глава II', ch3: 'Глава III' };
+
+    document.getElementById('testList').innerHTML = tests.map(t => `
+      <div class="card" style="border-left:3px solid ${chColors[t.chapter]||'#2563eb'};margin-bottom:12px;">
+        <div class="flex items-center gap-3">
+          <div class="flex-1">
+            <div class="font-bold">${t.title}</div>
+            <div class="text-sm text-gray mt-1">${t.questionCount} вопросов · ${chNames[t.chapter]||t.chapter}</div>
+          </div>
+          <label class="toggle" title="${t.is_active ? 'Выключить' : 'Включить'} тест">
+            <input type="checkbox" ${t.is_active ? 'checked' : ''} onchange="toggleTest(${t.id}, this.checked)">
+            <span class="toggle__slider"></span>
+          </label>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  async function toggleTest(id, isActive) {
+    await fetch(`/api/admin/tests/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'x-admin-pass': adminPass },
+      body: JSON.stringify({ is_active: isActive }),
+    });
+  }
+
+  function logout() {
+    sessionStorage.removeItem(PASS_KEY);
+    location.reload();
+  }
+
+  init();
+</script>
+</body>
+</html>

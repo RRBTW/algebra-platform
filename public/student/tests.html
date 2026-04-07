@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Тесты — Алгебра</title>
+  <link rel="stylesheet" href="/shared/style.css">
+</head>
+<body>
+
+<header class="header">
+  <div class="header__inner">
+    <span class="header__logo">📐 Алгебра 8</span>
+    <span class="header__sub">— Тесты</span>
+    <div class="header__spacer"></div>
+    <span id="studentName" class="text-sm text-gray"></span>
+    <button class="btn btn--secondary btn--sm" onclick="logout()">Выйти</button>
+  </div>
+</header>
+
+<div class="container" style="padding-top:28px; padding-bottom:40px;">
+  <div class="page-header">
+    <h1>Доступные тесты</h1>
+    <p>Выберите тест для прохождения</p>
+  </div>
+
+  <div id="list">
+    <div class="empty"><div class="empty__icon">⏳</div><div class="empty__text">Загрузка...</div></div>
+  </div>
+</div>
+
+<script>
+  const token = localStorage.getItem('studentToken');
+  if (!token) location.href = '/student/';
+  document.getElementById('studentName').textContent = localStorage.getItem('studentName') || '';
+
+  const chapterColors = { ch1: '#2563eb', ch2: '#7c3aed', ch3: '#059669' };
+  const chapterNames = { ch1: 'Глава I', ch2: 'Глава II', ch3: 'Глава III' };
+
+  async function load() {
+    const r = await fetch('/api/tests?token=' + token);
+    const tests = await r.json();
+    const list = document.getElementById('list');
+
+    if (!tests.length) {
+      list.innerHTML = '<div class="empty"><div class="empty__icon">🔒</div><div class="empty__text">Тесты пока не доступны.<br>Дождитесь учителя.</div></div>';
+      return;
+    }
+
+    list.innerHTML = tests.map(t => {
+      const color = chapterColors[t.chapter] || '#2563eb';
+      const chName = chapterNames[t.chapter] || t.chapter;
+      let statusHtml = '';
+      let btnHtml = '';
+
+      if (t.status === 'finished') {
+        const pct = Math.round(100 * t.score / t.questionCount);
+        const cls = pct >= 70 ? 'badge--green' : pct >= 50 ? 'badge--blue' : 'badge--red';
+        statusHtml = `<span class="badge ${cls}">${t.score}/${t.questionCount} (${pct}%)</span>`;
+        btnHtml = `<a href="/student/results.html?attempt=${t.attemptId}" class="btn btn--secondary btn--sm">Результаты</a>
+                   <a href="/student/solve.html?test=${t.id}" class="btn btn--secondary btn--sm">Пройти ещё</a>`;
+      } else if (t.status === 'in_progress') {
+        statusHtml = `<span class="badge badge--blue">Отвечено: ${t.score}/${t.questionCount}</span>`;
+        btnHtml = `<a href="/student/solve.html?test=${t.id}" class="btn btn--primary btn--sm">Продолжить</a>`;
+      } else {
+        statusHtml = `<span class="badge badge--gray">${t.questionCount} вопросов</span>`;
+        btnHtml = `<a href="/student/solve.html?test=${t.id}" class="btn btn--primary btn--sm">Начать</a>`;
+      }
+
+      return `
+        <div class="card" style="border-left:3px solid ${color}; margin-bottom:12px;">
+          <div class="flex items-center gap-3">
+            <div class="flex-1">
+              <div class="font-bold">${t.title}</div>
+              <div class="text-sm text-gray mt-1">${t.subtitle || chName}</div>
+            </div>
+            <div class="flex items-center gap-2">
+              ${statusHtml}
+              ${btnHtml}
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  function logout() {
+    localStorage.clear();
+    location.href = '/student/';
+  }
+
+  load();
+  // Обновлять список каждые 15с (на случай если учитель включил новый тест)
+  setInterval(load, 15000);
+</script>
+</body>
+</html>

@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Результаты — Панель учителя</title>
+  <link rel="stylesheet" href="/shared/style.css">
+</head>
+<body>
+
+<header class="header">
+  <div class="header__inner">
+    <a href="/admin/" class="btn btn--secondary btn--sm">← Назад</a>
+    <span class="header__logo" style="margin-left:8px;">📊 Результаты</span>
+  </div>
+</header>
+
+<div class="container--wide" style="padding:24px 16px 48px;">
+
+  <!-- Фильтры -->
+  <div class="card mb-4">
+    <div class="flex gap-3" style="flex-wrap:wrap;">
+      <div class="form-group" style="flex:1;min-width:160px;margin:0;">
+        <label>Фильтр по тесту</label>
+        <select id="filterTest" class="input" onchange="applyFilter()">
+          <option value="">Все тесты</option>
+        </select>
+      </div>
+      <div class="form-group" style="flex:1;min-width:160px;margin:0;">
+        <label>Фильтр по ученику</label>
+        <input id="filterStudent" class="input" type="text" placeholder="Имя..." oninput="applyFilter()">
+      </div>
+    </div>
+  </div>
+
+  <!-- Таблица результатов -->
+  <div class="card mb-4">
+    <div class="table-wrap">
+      <table id="resultsTable">
+        <thead>
+          <tr>
+            <th>Ученик</th>
+            <th>Тест</th>
+            <th>Результат</th>
+            <th>%</th>
+            <th>Начало</th>
+            <th>Время</th>
+          </tr>
+        </thead>
+        <tbody id="tbody">
+          <tr><td colspan="6" style="text-align:center;color:var(--gray-500);">Загрузка...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Анализ слабых тем -->
+  <div class="card">
+    <h2 class="font-bold mb-4" style="font-size:1.1rem;">Анализ по темам</h2>
+    <div id="analytics">
+      <div class="empty"><div class="empty__icon">⏳</div><div class="empty__text">Загрузка...</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- Модалка подробностей -->
+<div id="modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;overflow-y:auto;">
+  <div style="max-width:700px;margin:40px auto;padding:0 16px;">
+    <div class="card">
+      <div class="flex items-center gap-3 mb-4">
+        <h2 id="modalTitle" class="font-bold flex-1"></h2>
+        <button onclick="closeModal()" class="btn btn--secondary btn--sm">✕</button>
+      </div>
+      <div id="modalContent"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const PASS_KEY = 'adminPass';
+  const adminPass = sessionStorage.getItem(PASS_KEY);
+  if (!adminPass) { location.href = '/admin/'; }
+
+  let allAttempts = [];
+
+  async function load() {
+    const [attR, anaR] = await Promise.all([
+      fetch('/api/admin/results', { headers: { 'x-admin-pass': adminPass } }),
+      fetch('/api/admin/analytics', { headers: { 'x-admin-pass': adminPass } }),
+    ]);
+    allAttempts = await attR.json();
+    const analytics = await anaR.json();
+
+    // Заполнить фильтр тестов
+    const tests = [...new Set(allAttempts.map(a => a.test_title))];
+    const sel = document.getElementById('filterTest');
+    tests.forEach(t => {
+      const o = document.createElement('option');
+      o.value = t; o.textContent = t;
+      sel.appendChild(o);
+    });
+
+    renderTable(allAttempts);
+    renderAnalytics(analytics);
+  }
+
+  function applyFilter() {
+    const testFilter = document.getElementById('filterTest').value;
+    const studentFilter = document.getElementById('filterStudent').value.toLowerCase();
+    const filtered = allAttempts.filter(a => {
+      const matchTest = !testFilter || a.test_title === testFilter;
+      const matchStudent = !studentFilter || a.student_name.toLowerCase().includes(studentFilter);
+      return matchTest && matchStudent;
+    });
+    renderTable(filtered);
+  }
+
+  function renderTable(attempts) {
+    if (!attempts.length) {
+      document.getElementById('tbody').innerHTML =
+        '<tr><td colspan="6" style="text-align:center;color:var(--gray-500);padding:24px;">Нет результатов</td></tr>';
+      return;
+    }
+    document.getElementById('tbody').innerHTML = attempts.map(a => {
+      if (!a.finished_at) return `
+        <tr>
+          <td>${a.student_name}</td>
+          <td>${a.test_title}</td>
+          <td colspan="4" style="color:var(--gray-500);font-style:italic;">В процессе...</td>
+        </tr>`;
+
+      const pct = Math.round(100 * a.score / a.total);
+      const badgeCls = pct >= 70 ? 'badge--green' : pct >= 50 ? 'badge--blue' : 'badge--red';
+      const start = new Date(a.started_at);
+      const end = new Date(a.finished_at);
+      const diffMin = Math.round((end - start) / 60000);
+
+      return `
+        <tr class="expandable" onclick="showDetails(${a.id}, '${a.student_name}')">
+          <td><strong>${a.student_name}</strong></td>
+          <td>${a.test_title}</td>
+          <td>${a.score}/${a.total}</td>
+          <td><span class="badge ${badgeCls}">${pct}%</span></td>
+          <td class="font-mono text-xs">${start.toLocaleString('ru')}</td>
+          <td class="text-sm text-gray">${diffMin > 0 ? diffMin + ' мин' : '< 1 мин'}</td>
+        </tr>`;
+    }).join('');
+  }
+
+  function renderAnalytics(data) {
+    if (!data.length) {
+      document.getElementById('analytics').innerHTML = '<div class="empty"><div class="empty__text">Нет данных для анализа</div></div>';
+      return;
+    }
+    document.getElementById('analytics').innerHTML = data.map(row => {
+      const isDanger = row.pct < 50;
+      return `
+        <div class="analytics-row ${isDanger ? 'danger' : 'ok'}">
+          <div class="analytics-row__label" title="${row.topic}">${row.topic}</div>
+          <div class="analytics-row__bar-wrap">
+            <div class="analytics-row__bar" style="width:${row.pct}%"></div>
+          </div>
+          <div class="analytics-row__pct">${row.pct}%</div>
+          <div class="text-xs text-gray" style="min-width:80px;">${row.correct_answers}/${row.total_answers}</div>
+        </div>`;
+    }).join('');
+  }
+
+  async function showDetails(attemptId, studentName) {
+    const r = await fetch(`/api/admin/results/${attemptId}`, { headers: { 'x-admin-pass': adminPass } });
+    const { attempt, answers } = await r.json();
+
+    document.getElementById('modalTitle').textContent = `${studentName} — подробности`;
+    document.getElementById('modalContent').innerHTML = answers.map((ans, i) => {
+      const isCorrect = ans.is_correct;
+      return `
+        <div style="padding:10px 0;border-bottom:1px solid var(--gray-100);">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-xs text-gray">#${i+1}</span>
+            <span class="badge ${isCorrect ? 'badge--green' : 'badge--red'}">${isCorrect ? '✓' : '✗'}</span>
+            <span class="text-xs text-gray">${ans.topic}</span>
+          </div>
+          <div class="font-mono text-sm" style="margin-bottom:6px;">${ans.question}</div>
+          ${!isCorrect ? `
+            <div class="text-sm" style="color:var(--wrong-text);">Ответил: ${ans.options[ans.selected_index] ?? '—'}</div>
+            <div class="text-sm" style="color:var(--correct-text);">Правильно: ${ans.options[ans.correct_index]}</div>
+            <div class="explanation" style="display:block;margin-top:4px;">${ans.explanation}</div>
+          ` : `<div class="text-sm" style="color:var(--correct-text);">✓ ${ans.options[ans.correct_index]}</div>`}
+        </div>`;
+    }).join('');
+
+    document.getElementById('modal').style.display = 'block';
+  }
+
+  function closeModal() {
+    document.getElementById('modal').style.display = 'none';
+  }
+
+  document.getElementById('modal').addEventListener('click', (e) => {
+    if (e.target === document.getElementById('modal')) closeModal();
+  });
+
+  load();
+</script>
+</body>
+</html>

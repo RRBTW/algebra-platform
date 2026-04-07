@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Результаты — Алгебра</title>
+  <link rel="stylesheet" href="/shared/style.css">
+</head>
+<body>
+
+<header class="header">
+  <div class="header__inner">
+    <a href="/student/tests.html" class="btn btn--secondary btn--sm">← К тестам</a>
+    <span class="header__sub font-bold" style="margin-left:8px;">Результаты</span>
+  </div>
+</header>
+
+<div class="container" style="padding-top:24px; padding-bottom:48px;">
+  <div id="content">
+    <div class="empty"><div class="empty__icon">⏳</div><div class="empty__text">Загрузка...</div></div>
+  </div>
+</div>
+
+<script>
+  const token = localStorage.getItem('studentToken');
+  if (!token) location.href = '/student/';
+
+  const params = new URLSearchParams(location.search);
+  const attemptId = params.get('attempt');
+  if (!attemptId) location.href = '/student/tests.html';
+
+  async function load() {
+    const r = await fetch(`/api/results/${attemptId}?token=${token}`);
+    if (!r.ok) { document.getElementById('content').innerHTML = '<div class="empty">Ошибка загрузки</div>'; return; }
+    const { attempt, answers } = await r.json();
+
+    const pct = Math.round(100 * attempt.score / attempt.total);
+    const color = pct >= 70 ? 'var(--correct-text)' : pct >= 50 ? 'var(--ch1)' : 'var(--wrong-text)';
+    const bg = pct >= 70 ? 'var(--correct-bg)' : pct >= 50 ? '#dbeafe' : 'var(--wrong-bg)';
+    const emoji = pct >= 90 ? '🏆' : pct >= 70 ? '🎉' : pct >= 50 ? '📚' : '💪';
+
+    let html = `
+      <div class="card" style="text-align:center;margin-bottom:24px;background:${bg};">
+        <div style="font-size:2.4rem;margin-bottom:8px;">${emoji}</div>
+        <div style="font-size:1.5rem;font-weight:700;color:${color}">${attempt.score}/${attempt.total} (${pct}%)</div>
+        <div class="text-sm text-gray mt-2">
+          ${attempt.finished_at ? 'Завершено: ' + new Date(attempt.finished_at).toLocaleString('ru') : ''}
+        </div>
+      </div>
+
+      <div class="page-header">
+        <h1>Разбор ошибок</h1>
+        <p>Правильных ответов: ${attempt.score} из ${attempt.total}</p>
+      </div>
+    `;
+
+    answers.forEach((ans, i) => {
+      const isCorrect = ans.is_correct;
+      const borderColor = isCorrect ? 'var(--correct-border)' : 'var(--wrong-border)';
+
+      html += `
+        <div class="question" style="border-left:3px solid ${borderColor};margin-bottom:12px;">
+          <div class="flex items-center gap-2 mb-2">
+            <span class="question__num" style="margin:0">Вопрос ${i + 1}</span>
+            <span class="badge ${isCorrect ? 'badge--green' : 'badge--red'}">${isCorrect ? '✓ Верно' : '✗ Неверно'}</span>
+            <span class="question__topic" style="margin:0">${ans.topic}</span>
+          </div>
+          <div class="question__text">${ans.question}</div>
+          <div class="options">
+            ${ans.options.map((opt, j) => {
+              let cls = '';
+              if (j === ans.correct_index) cls = 'correct';
+              else if (j === ans.selected_index && !isCorrect) cls = 'wrong';
+              return `<button class="option ${cls}" disabled>${String.fromCharCode(65+j)}. ${opt}</button>`;
+            }).join('')}
+          </div>
+          ${!isCorrect ? `
+            <div class="explanation" style="display:block;">
+              Правильный ответ: ${ans.options[ans.correct_index]}. ${ans.explanation}
+            </div>` : ''}
+        </div>`;
+    });
+
+    document.getElementById('content').innerHTML = html;
+  }
+
+  load();
+</script>
+</body>
+</html>

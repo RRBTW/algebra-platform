@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Редактор тестов — Панель учителя</title>
+  <link rel="stylesheet" href="/shared/style.css">
+</head>
+<body>
+
+<header class="header">
+  <div class="header__inner">
+    <a href="/admin/" class="btn btn--secondary btn--sm">← Назад</a>
+    <span class="header__logo" style="margin-left:8px;">✏️ Редактор тестов</span>
+  </div>
+</header>
+
+<div class="container--wide" style="padding:24px 16px 48px;display:grid;grid-template-columns:280px 1fr;gap:20px;align-items:start;">
+
+  <!-- Левая панель: тесты -->
+  <div>
+    <div class="card mb-4">
+      <div class="font-bold mb-3">Тесты</div>
+      <div id="testList" style="margin-bottom:12px;"></div>
+      <button class="btn btn--secondary btn--sm btn--block" onclick="showCreateTest()">+ Новый тест</button>
+    </div>
+
+    <!-- Форма создания теста -->
+    <div class="card" id="createTestForm" style="display:none;">
+      <div class="font-bold mb-3">Новый тест</div>
+      <div class="form-group">
+        <label>Название</label>
+        <input id="newTestTitle" class="input" type="text" placeholder="Тест 6: ...">
+      </div>
+      <div class="form-group">
+        <label>Подзаголовок</label>
+        <input id="newTestSubtitle" class="input" type="text" placeholder="40 вопросов · Глава I">
+      </div>
+      <div class="form-group">
+        <label>Глава</label>
+        <select id="newTestChapter" class="input">
+          <option value="ch1">Глава I</option>
+          <option value="ch2">Глава II</option>
+          <option value="ch3">Глава III</option>
+        </select>
+      </div>
+      <div class="flex gap-2">
+        <button class="btn btn--primary btn--sm flex-1" onclick="createTest()">Создать</button>
+        <button class="btn btn--secondary btn--sm" onclick="document.getElementById('createTestForm').style.display='none'">Отмена</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Правая панель: вопросы выбранного теста -->
+  <div id="rightPanel">
+    <div class="empty" style="margin-top:48px;">
+      <div class="empty__icon">👈</div>
+      <div class="empty__text">Выберите тест из списка</div>
+    </div>
+  </div>
+</div>
+
+<!-- Модалка редактирования/добавления вопроса -->
+<div id="qModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;overflow-y:auto;">
+  <div style="max-width:620px;margin:40px auto;padding:0 16px;">
+    <div class="card">
+      <div class="flex items-center gap-3 mb-4">
+        <h2 id="qModalTitle" class="font-bold flex-1">Вопрос</h2>
+        <button onclick="closeQModal()" class="btn btn--secondary btn--sm">✕</button>
+      </div>
+      <div class="form-group">
+        <label>Тема</label>
+        <input id="qTopic" class="input" type="text" placeholder="Область определения">
+      </div>
+      <div class="form-group">
+        <label>Вопрос</label>
+        <textarea id="qText" class="input" rows="3" placeholder="Текст задания..."></textarea>
+      </div>
+      <div class="form-group">
+        <label>Вариант А</label>
+        <input id="qOpt0" class="input" type="text" placeholder="Вариант A">
+      </div>
+      <div class="form-group">
+        <label>Вариант Б</label>
+        <input id="qOpt1" class="input" type="text" placeholder="Вариант Б">
+      </div>
+      <div class="form-group">
+        <label>Вариант В</label>
+        <input id="qOpt2" class="input" type="text" placeholder="Вариант В">
+      </div>
+      <div class="form-group">
+        <label>Вариант Г</label>
+        <input id="qOpt3" class="input" type="text" placeholder="Вариант Г">
+      </div>
+      <div class="form-group">
+        <label>Правильный ответ</label>
+        <select id="qCorrect" class="input">
+          <option value="0">А</option>
+          <option value="1">Б</option>
+          <option value="2">В</option>
+          <option value="3">Г</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Объяснение</label>
+        <textarea id="qExpl" class="input" rows="2" placeholder="Краткое пояснение..."></textarea>
+      </div>
+      <div class="flex gap-2">
+        <button class="btn btn--primary flex-1" onclick="saveQuestion()">Сохранить</button>
+        <button class="btn btn--secondary" onclick="closeQModal()">Отмена</button>
+      </div>
+      <div id="qError" class="mt-3 text-sm" style="color:var(--wrong-text);display:none;"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const PASS_KEY = 'adminPass';
+  const adminPass = sessionStorage.getItem(PASS_KEY);
+  if (!adminPass) { location.href = '/admin/'; }
+
+  const headers = { 'Content-Type': 'application/json', 'x-admin-pass': adminPass };
+
+  let selectedTestId = null;
+  let editingQuestionId = null;
+  const chColors = { ch1: '#2563eb', ch2: '#7c3aed', ch3: '#059669' };
+
+  async function loadTests() {
+    const r = await fetch('/api/admin/tests', { headers });
+    const tests = await r.json();
+    document.getElementById('testList').innerHTML = tests.map(t => `
+      <div style="padding:8px 10px;border-radius:6px;cursor:pointer;margin-bottom:4px;
+           background:${selectedTestId == t.id ? 'var(--gray-100)' : 'transparent'};
+           border-left:3px solid ${chColors[t.chapter]||'#2563eb'};"
+           onclick="selectTest(${t.id})">
+        <div class="text-sm font-bold">${t.title}</div>
+        <div class="text-xs text-gray">${t.questionCount} вопросов</div>
+      </div>`).join('');
+  }
+
+  async function selectTest(testId) {
+    selectedTestId = testId;
+    loadTests();
+    loadQuestions(testId);
+  }
+
+  async function loadQuestions(testId) {
+    const r = await fetch(`/api/admin/questions/${testId}`, { headers });
+    const questions = await r.json();
+
+    const panel = document.getElementById('rightPanel');
+    panel.innerHTML = `
+      <div class="flex items-center gap-3 mb-4">
+        <h2 class="font-bold flex-1" style="font-size:1.1rem;">Вопросы теста</h2>
+        <button class="btn btn--primary btn--sm" onclick="openAddQuestion()">+ Добавить вопрос</button>
+      </div>
+      ${!questions.length ? '<div class="empty"><div class="empty__text">Нет вопросов. Добавьте первый!</div></div>' : ''}
+      <div id="qList">
+        ${questions.map((q, i) => `
+          <div class="card" style="margin-bottom:8px;">
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-gray font-mono" style="min-width:28px;">#${i+1}</span>
+              <span class="question__topic" style="margin:0;">${q.topic}</span>
+              <div class="flex-1 text-sm font-mono" style="overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">${q.question}</div>
+              <button class="btn btn--secondary btn--sm" onclick="openEditQuestion(${q.id})">✏️</button>
+              <button class="btn btn--danger btn--sm" onclick="deleteQuestion(${q.id})">🗑</button>
+            </div>
+          </div>`).join('')}
+      </div>`;
+  }
+
+  function showCreateTest() {
+    document.getElementById('createTestForm').style.display = 'block';
+  }
+
+  async function createTest() {
+    const title = document.getElementById('newTestTitle').value.trim();
+    const subtitle = document.getElementById('newTestSubtitle').value.trim();
+    const chapter = document.getElementById('newTestChapter').value;
+    if (!title) return;
+    await fetch('/api/admin/tests', { method: 'POST', headers, body: JSON.stringify({ title, subtitle, chapter }) });
+    document.getElementById('createTestForm').style.display = 'none';
+    document.getElementById('newTestTitle').value = '';
+    loadTests();
+  }
+
+  // ─── Question modal ───────────────────────────────────────────────────────
+
+  function openAddQuestion() {
+    editingQuestionId = null;
+    document.getElementById('qModalTitle').textContent = 'Новый вопрос';
+    ['qTopic','qText','qOpt0','qOpt1','qOpt2','qOpt3','qExpl'].forEach(id => document.getElementById(id).value = '');
+    document.getElementById('qCorrect').value = '0';
+    document.getElementById('qError').style.display = 'none';
+    document.getElementById('qModal').style.display = 'block';
+  }
+
+  async function openEditQuestion(questionId) {
+    // Получить вопрос из уже загруженных (перезапросить для надёжности)
+    const r = await fetch(`/api/admin/questions/${selectedTestId}`, { headers });
+    const questions = await r.json();
+    const q = questions.find(x => x.id === questionId);
+    if (!q) return;
+
+    editingQuestionId = questionId;
+    document.getElementById('qModalTitle').textContent = 'Редактировать вопрос';
+    document.getElementById('qTopic').value = q.topic;
+    document.getElementById('qText').value = q.question;
+    q.options.forEach((opt, i) => { document.getElementById(`qOpt${i}`).value = opt; });
+    document.getElementById('qCorrect').value = q.correct_index;
+    document.getElementById('qExpl').value = q.explanation;
+    document.getElementById('qError').style.display = 'none';
+    document.getElementById('qModal').style.display = 'block';
+  }
+
+  async function saveQuestion() {
+    const topic = document.getElementById('qTopic').value.trim();
+    const question = document.getElementById('qText').value.trim();
+    const options = [0,1,2,3].map(i => document.getElementById(`qOpt${i}`).value.trim());
+    const correctIndex = parseInt(document.getElementById('qCorrect').value);
+    const explanation = document.getElementById('qExpl').value.trim();
+    const errEl = document.getElementById('qError');
+
+    if (!topic || !question || options.some(o => !o) || !explanation) {
+      errEl.textContent = 'Заполните все поля';
+      errEl.style.display = 'block';
+      return;
+    }
+
+    if (editingQuestionId) {
+      await fetch(`/api/admin/questions/${editingQuestionId}`, {
+        method: 'PUT', headers,
+        body: JSON.stringify({ topic, question, options, correctIndex, explanation }),
+      });
+    } else {
+      await fetch('/api/admin/questions', {
+        method: 'POST', headers,
+        body: JSON.stringify({ testId: selectedTestId, topic, question, options, correctIndex, explanation, sortOrder: 999 }),
+      });
+    }
+
+    closeQModal();
+    loadQuestions(selectedTestId);
+    loadTests();
+  }
+
+  async function deleteQuestion(questionId) {
+    if (!confirm('Удалить вопрос?')) return;
+    await fetch(`/api/admin/questions/${questionId}`, { method: 'DELETE', headers });
+    loadQuestions(selectedTestId);
+    loadTests();
+  }
+
+  function closeQModal() {
+    document.getElementById('qModal').style.display = 'none';
+    editingQuestionId = null;
+  }
+
+  document.getElementById('qModal').addEventListener('click', (e) => {
+    if (e.target === document.getElementById('qModal')) closeQModal();
+  });
+
+  loadTests();
+</script>
+</body>
+</html>

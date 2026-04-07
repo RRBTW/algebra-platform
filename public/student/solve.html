@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Решение теста — Алгебра</title>
+  <link rel="stylesheet" href="/shared/style.css">
+  <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+
+<header class="header">
+  <div class="header__inner">
+    <a href="/student/tests.html" class="btn btn--secondary btn--sm">← Назад</a>
+    <span id="testTitle" class="header__sub font-bold" style="margin-left:8px;"></span>
+    <div class="header__spacer"></div>
+    <span id="headerProgress" class="text-sm text-gray font-mono"></span>
+  </div>
+</header>
+
+<div class="sticky-bar">
+  <div class="container">
+    <div class="progress flex-1">
+      <div id="progressBar" class="progress__bar" style="width:0%"></div>
+    </div>
+    <span id="progressText" class="text-sm text-gray font-mono" style="white-space:nowrap;"></span>
+  </div>
+</div>
+
+<div class="container" style="padding-top:20px; padding-bottom:100px;" id="questionsContainer">
+  <div class="empty"><div class="empty__icon">⏳</div><div class="empty__text">Загрузка вопросов...</div></div>
+</div>
+
+<div style="position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid var(--gray-200);padding:12px 16px;z-index:100;">
+  <div class="container" style="display:flex;align-items:center;gap:16px;">
+    <span id="bottomProgress" class="text-sm text-gray"></span>
+    <div class="flex-1"></div>
+    <button id="finishBtn" class="btn btn--success btn--lg" disabled onclick="finishTest()">
+      Завершить тест ✓
+    </button>
+  </div>
+</div>
+
+<script>
+  const token = localStorage.getItem('studentToken');
+  const studentId = localStorage.getItem('studentId');
+  const studentName = localStorage.getItem('studentName');
+  if (!token) location.href = '/student/';
+
+  const params = new URLSearchParams(location.search);
+  const testId = params.get('test');
+  if (!testId) location.href = '/student/tests.html';
+
+  let questions = [];
+  let answers = {}; // questionId → selectedIndex
+  let attemptId = null;
+  let finished = false;
+
+  const socket = io();
+  socket.emit('student:join', { studentId, name: studentName });
+
+  async function init() {
+    // Загрузить вопросы
+    const r = await fetch(`/api/tests/${testId}/questions`);
+    const data = await r.json();
+    if (!r.ok) { alert('Ошибка загрузки теста'); return; }
+
+    document.getElementById('testTitle').textContent = data.test.title;
+    questions = data.questions;
+
+    // Начать или продолжить попытку
+    const ar = await fetch('/api/attempts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ testId, token }),
+    });
+    const aData = await ar.json();
+    attemptId = aData.attemptId;
+
+    // Уведомить сервер о начале
+    socket.emit('student:start-test', {
+      studentId, testId, testTitle: data.test.title, total: questions.length
+    });
+
+    renderQuestions();
+    updateProgress();
+  }
+
+  function renderQuestions() {
+    const container = document.getElementById('questionsContainer');
+    container.innerHTML = questions.map((q, i) => `
+      <div class="question" id="q${q.id}">
+        <div class="question__num">Вопрос ${i + 1} из ${questions.length}</div>
+        <div class="question__topic">${q.topic}</div>
+        <div class="question__text">${q.question}</div>
+        <div class="options" id="opts${q.id}">
+          ${q.options.map((opt, j) => `
+            <button class="option" onclick="selectOption(${q.id}, ${j})" id="opt_${q.id}_${j}">
+              ${String.fromCharCode(65+j)}. ${opt}
+            </button>
+          `).join('')}
+        </div>
+        <div class="explanation" id="expl${q.id}"></div>
+      </div>
+    `).join('');
+  }
+
+  async function selectOption(questionId, selectedIndex) {
+    // Если вопрос уже отвечен или тест завершён — игнорировать
+    if (finished || answers[questionId] !== undefined) return;
+
+    answers[questionId] = selectedIndex;
+
+    // Визуально заблокировать все кнопки
+    questions.find(q=>q.id===questionId)?.options.forEach((_, j) => {
+      const btn = document.getElementById(`opt_${questionId}_${j}`);
+      if (btn) btn.disabled = true;
+    });
+
+    // Отправить на сервер
+    try {
+      const r = await fetch('/api/answers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ attemptId, questionId, selectedIndex, token }),
+      });
+      const data = await r.json();
+
+      // Подсветить выбранный вариант
+      const btn = document.getElementById(`opt_${questionId}_${selectedIndex}`);
+      if (btn) btn.classList.add(data.isCorrect ? 'correct' : 'wrong');
+
+      updateProgress();
+
+      // Socket событие
+      socket.emit('student:answer', {
+        studentId, testId, questionId, selectedIndex,
+        isCorrect: data.isCorrect,
+        questionNum: data.answered,
+        total: data.total,
+      });
+    } catch (err) {
+      console.error('Ошибка отправки ответа:', err);
+    }
+  }
+
+  function updateProgress() {
+    const answered = Object.keys(answers).length;
+    const total = questions.length;
+    const pct = total ? Math.round(100 * answered / total) : 0;
+
+    document.getElementById('progressBar').style.width = pct + '%';
+    document.getElementById('progressText').textContent = `${answered}/${total}`;
+    document.getElementById('headerProgress').textContent = `${answered}/${total}`;
+    document.getElementById('bottomProgress').textContent = answered < total
+      ? `Отвечено: ${answered} из ${total}. Отвечайте на все вопросы.`
+      : `Все ${total} вопросов отвечены. Можно завершать!`;
+
+    const finishBtn = document.getElementById('finishBtn');
+    finishBtn.disabled = answered < total;
+    if (answered === total) finishBtn.style.animation = 'none';
+  }
+
+  async function finishTest() {
+    if (finished) return;
+    finished = true;
+    document.getElementById('finishBtn').disabled = true;
+    document.getElementById('finishBtn').textContent = 'Завершаем...';
+
+    try {
+      const r = await fetch(`/api/attempts/${attemptId}/finish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
+      const data = await r.json();
+
+      // Показать правильные ответы и объяснения
+      showResults(data);
+
+      socket.emit('student:finish', {
+        studentId, testId,
+        score: data.attempt.score,
+        total: data.attempt.total,
+      });
+
+      // Через 2 секунды кнопка → результаты
+      setTimeout(() => {
+        document.getElementById('finishBtn').textContent = '📊 Посмотреть результаты';
+        document.getElementById('finishBtn').disabled = false;
+        document.getElementById('finishBtn').onclick = () => {
+          location.href = `/student/results.html?attempt=${attemptId}`;
+        };
+      }, 1500);
+
+    } catch (err) {
+      alert('Ошибка завершения: ' + err.message);
+      finished = false;
+      document.getElementById('finishBtn').disabled = false;
+      document.getElementById('finishBtn').textContent = 'Завершить тест ✓';
+    }
+  }
+
+  function showResults(data) {
+    const { answers: serverAnswers } = data;
+    let score = 0;
+    serverAnswers.forEach(ans => {
+      if (ans.is_correct) score++;
+
+      // Подсветить правильный ответ
+      const correctBtn = document.getElementById(`opt_${ans.question_id}_${ans.correct_index}`);
+      if (correctBtn) correctBtn.classList.add('correct');
+
+      // Подсветить неправильный ответ (если выбран)
+      if (!ans.is_correct && ans.selected_index !== null) {
+        const wrongBtn = document.getElementById(`opt_${ans.question_id}_${ans.selected_index}`);
+        if (wrongBtn) wrongBtn.classList.add('wrong');
+      }
+
+      // Показать объяснение для неправильных
+      if (!ans.is_correct) {
+        const explEl = document.getElementById(`expl${ans.question_id}`);
+        if (explEl) {
+          explEl.textContent = `Правильный ответ: ${ans.options[ans.correct_index]}. ${ans.explanation}`;
+          explEl.style.display = 'block';
+        }
+      }
+    });
+
+    const pct = Math.round(100 * score / serverAnswers.length);
+    const scoreColor = pct >= 70 ? 'var(--correct-text)' : pct >= 50 ? 'var(--ch1)' : 'var(--wrong-text)';
+    const msg = pct >= 90 ? 'Отлично!' : pct >= 70 ? 'Хорошо!' : pct >= 50 ? 'Неплохо' : 'Нужна практика';
+
+    const banner = document.createElement('div');
+    banner.style.cssText = `background:#fff;border:1.5px solid var(--gray-200);border-radius:8px;padding:20px;text-align:center;margin-bottom:16px;`;
+    banner.innerHTML = `
+      <div style="font-size:2rem;margin-bottom:8px;">${pct >= 70 ? '🎉' : '📝'}</div>
+      <div style="font-size:1.4rem;font-weight:700;color:${scoreColor}">${msg}</div>
+      <div style="font-size:1.1rem;margin-top:4px;">Результат: <strong>${score}/${serverAnswers.length}</strong> (${pct}%)</div>
+    `;
+    document.getElementById('questionsContainer').prepend(banner);
+
+    // Промотать наверх
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  init();
+</script>
+</body>
+</html>
